@@ -17,6 +17,7 @@ import burlap.behavior.singleagent.planning.deterministic.informed.astar.AStar;
 import burlap.behavior.singleagent.planning.deterministic.uninformed.bfs.BFS;
 import burlap.behavior.singleagent.planning.deterministic.uninformed.dfs.DFS;
 import burlap.behavior.singleagent.planning.stochastic.valueiteration.ValueIteration;
+import burlap.behavior.singleagent.planning.stochastic.policyiteration.PolicyIteration;
 import burlap.oomdp.visualizer.Visualizer;
 import burlap.oomdp.auxiliary.StateGenerator;
 import burlap.oomdp.auxiliary.StateParser;
@@ -48,23 +49,23 @@ public class BasicBehavior {
 
         //uncomment the example you want to see (and comment-out the rest)
 
-        //example.BFSExample(outputPath);
-        //example.DFSExample(outputPath);
-        //example.AStarExample(outputPath);
         //example.ValueIterationExample(outputPath);
+        //example.PolicyIterationExample( outputPath );
         //example.QLearningExample(outputPath);
-        //example.SarsaLearningExample(outputPath);
-        example.experimenterAndPlotter();
+        example.SarsaLearningExample(outputPath);
+        //example.experimenterAndPlotter();
 
         //run the visualizer (only use if you don't use the experiment plotter example)
-        //example.visualize(outputPath);
+        example.visualize(outputPath);
     }
 
 
     public BasicBehavior(){
         //create the domain
+        //gwdg = new GridWorldDomain(25, 25);
         gwdg = new GridWorldDomain(11, 11);
         gwdg.setMapToFourRooms();
+        //gwdg.makeEmptyMap();
         domain = gwdg.generateDomain();
 
         //create the state parser
@@ -100,92 +101,45 @@ public class BasicBehavior {
                                 domain, sp, outputPath);
     }
 
-    public void BFSExample(String outputPath){
-
-        if(!outputPath.endsWith("/")){
-            outputPath = outputPath + "/";
-        }
-
-        //BFS ignores reward; it just searches for a goal condition satisfying state
-        DeterministicPlanner planner = new BFS(domain, goalCondition, hashingFactory);
-        planner.planFromState(initialState);
-
-        //capture the computed plan in a partial policy
-        Policy p = new SDPlannerPolicy(planner);
-
-        //record the plan results to a file
-        p.evaluateBehavior(initialState, rf, tf).writeToFile(outputPath + "planResult", sp);
-    }
-
-    public void DFSExample(String outputPath){
-        if(!outputPath.endsWith("/")){
-            outputPath = outputPath + "/";
-        }
-
-        //DFS ignores reward; it just searches for a goal condition satisfying state
-        DeterministicPlanner planner = new DFS(domain, goalCondition, hashingFactory);
-        planner.planFromState(initialState);
-
-        //capture the computed plan in a partial policy
-        Policy p = new SDPlannerPolicy(planner);
-
-        //record the plan results to a file
-        p.evaluateBehavior(initialState, rf, tf).writeToFile(outputPath + "planResult", sp);
-    }
-
-    public void AStarExample(String outputPath){
-        if(!outputPath.endsWith("/")){
-            outputPath = outputPath + "/";
-        }
-
-        Heuristic mdistHeuristic = new Heuristic() {
-            @Override
-            public double h(State s) {
-
-                String an = GridWorldDomain.CLASSAGENT;
-                String ln = GridWorldDomain.CLASSLOCATION;
-
-                ObjectInstance agent = s.getObjectsOfTrueClass(an).get(0);
-                ObjectInstance location = s.getObjectsOfTrueClass(ln).get(0);
-
-                //get agent position
-                int ax = agent.getDiscValForAttribute(GridWorldDomain.ATTX);
-                int ay = agent.getDiscValForAttribute(GridWorldDomain.ATTY);
-
-                //get location position
-                int lx = location.getDiscValForAttribute(GridWorldDomain.ATTX);
-                int ly = location.getDiscValForAttribute(GridWorldDomain.ATTY);
-
-                //compute Manhattan distance
-                double mdist = Math.abs(ax-lx) + Math.abs(ay-ly);
-
-                return -mdist;
-            }
-        };
-
-        //provide A* the heuristic as well as the reward function so that it can keep
-        //track of the actual cost
-        DeterministicPlanner planner = new AStar(domain, rf, goalCondition,
-            hashingFactory, mdistHeuristic);
-        planner.planFromState(initialState);
-
-        //capture the computed plan in a partial policy
-        Policy p = new SDPlannerPolicy(planner);
-
-        //record the plan results to a file
-        p.evaluateBehavior(initialState, rf, tf).writeToFile(outputPath + "planResult", sp);
-    }
-
     public void ValueIterationExample(String outputPath){
         if(!outputPath.endsWith("/")){
             outputPath = outputPath + "/";
         }
 
+        long start = System.currentTimeMillis();
+
         OOMDPPlanner planner = new ValueIteration(domain, rf, tf, 0.99, hashingFactory,
-                                0.001, 100);
+                                0.001, 10000);
         planner.planFromState(initialState);
 
+        long elapsedTimeMillis  = System.currentTimeMillis() - start;
+        System.out.println( "Value Iteration took " + elapsedTimeMillis/1000F + " seconds\n");
+
         //create a Q-greedy policy from the planner
+        Policy p = new GreedyQPolicy((QComputablePlanner)planner);
+
+        //record the plan results to a file
+        p.evaluateBehavior(initialState, rf, tf).writeToFile(outputPath + "planResult", sp);
+
+        //visualize the value function and policy
+        this.valueFunctionVisualize((QComputablePlanner)planner, p);
+    }
+
+    public void PolicyIterationExample(String outputPath ){
+        if(!outputPath.endsWith("/")){
+            outputPath = outputPath + "/";
+        }
+
+        long start = System.currentTimeMillis();
+
+        OOMDPPlanner planner = new PolicyIteration(domain, rf, tf, 0.99, hashingFactory,
+                                0.001, 100, 100);
+        planner.planFromState(initialState);
+
+        long elapsedTimeMillis  = System.currentTimeMillis() - start;
+        System.out.println( "Policy Iteration took " + elapsedTimeMillis/1000F + " seconds\n");
+
+        //create a Q-greedy policy form the planner
         Policy p = new GreedyQPolicy((QComputablePlanner)planner);
 
         //record the plan results to a file
@@ -259,23 +213,6 @@ public class BasicBehavior {
         //custom reward function for more interesting results
         final RewardFunction rf = new GoalBasedRF(this.goalCondition, 5., -0.1);
 
-        /**
-         * Create factories for Q-learning agent and SARSA agent to compare
-         */
-
-        LearningAgentFactory qLearningFactory = new LearningAgentFactory() {
-
-            @Override
-            public String getAgentName() {
-                return "Q-learning";
-            }
-
-            @Override
-            public LearningAgent generateAgent() {
-                return new QLearning(domain, rf, tf, 0.99, hashingFactory, 0.3, 0.1);
-            }
-        };
-
         LearningAgentFactory sarsaLearningFactory = new LearningAgentFactory() {
 
             @Override
@@ -292,14 +229,19 @@ public class BasicBehavior {
         StateGenerator sg = new ConstantStateGenerator(this.initialState);
 
         LearningAlgorithmExperimenter exp = new LearningAlgorithmExperimenter((SADomain)this.domain,
-            rf, sg, 2, 100, qLearningFactory, sarsaLearningFactory);
+            rf, sg, 2, 100, sarsaLearningFactory);
 
         exp.setUpPlottingConfiguration(500, 250, 2, 1000,
             TrialMode.MOSTRECENTANDAVERAGE,
             PerformanceMetric.CUMULTAIVEREWARDPEREPISODE,
             PerformanceMetric.AVERAGEEPISODEREWARD);
 
+        long start = System.currentTimeMillis();
+
         exp.startExperiment();
+
+        long elapsedTimeMillis  = System.currentTimeMillis() - start;
+        System.out.println( "Experiment took " + elapsedTimeMillis/(60*1000F) + " minutes\n");
 
         exp.writeStepAndEpisodeDataToCSV("expData");
 
